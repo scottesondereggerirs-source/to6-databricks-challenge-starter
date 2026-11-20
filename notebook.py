@@ -155,12 +155,57 @@ for table in tables:
 
 # COMMAND ----------
 
+# DBTITLE 1,Validate batches and choose good_batch_df
 # Your checks and decision here.
 # I guess, check the powerpoint for the instructions? God damnit. What in the hell is going on here? What is the definition of a "batch?" Are the different tables considered as different batches? Where are the fucking "batches?"
 
 #ok -- half of the instructions make it look like I should be writing code here, but maybe we're still just doing visual observations? I've beaten this to death by now just trying to understand and work through the directions.
 #Based on everything we're looking at, if we assume "batch" means an entire table, which nobody in their right mind would do, then it looks like parsed_source was used to create a "bad" batch in returns_initial and then a "good" batch in "returns_corrected"
 # So, I guess "returns_corrected" is the correct batch, and "returns_initial" is the bad batch, based on the duplcate return_id with a null income value.
+
+from pyspark.sql import functions as F, Window
+
+# Data contract rules from CHALLENGE.md
+REQUIRED = ["return_id", "tax_year", "income", "deduction"]
+AMOUNTS = ["income", "deduction"]
+
+def find_violations(df):
+    """Return every record that breaks a rule, with a rejection_reason column."""
+    dup_count = F.count(F.lit(1)).over(Window.partitionBy("return_id"))
+    checks = (
+        [(F.col(c).isNull(), f"completeness: {c} is null") for c in REQUIRED]
+        + [(dup_count > 1, "uniqueness: return_id appears more than once")]
+        + [(F.col(c) < 0, f"nonnegative: {c} is negative") for c in AMOUNTS]
+    )
+    reasons = F.array_compact(F.array(*[F.when(cond, F.lit(msg)) for cond, msg in checks]))
+    return (df.withColumn("_reasons", reasons)
+              .filter(F.size("_reasons") > 0)
+              .withColumn("rejection_reason", F.array_join("_reasons", "; "))
+              .drop("_reasons"))
+
+# Check each batch in delivery order; the first batch with no violations is accepted.
+batches = [INITIAL_TABLE, CORRECTED_TABLE]
+all_violations = None
+good_batch_table = None
+for table in batches:
+    violations = find_violations(spark.table(table)).withColumn("batch", F.lit(table))
+    n = violations.count()
+    print(f"{table}: {spark.table(table).count()} rows, {n} violating records -> {'REJECTED' if n else 'ACCEPTED'}")
+    all_violations = violations if all_violations is None else all_violations.unionByName(violations)
+    if n == 0 and good_batch_table is None:
+        good_batch_table = table
+
+# Preserve the affected records and reasons (overwrite, so reruns do not append copies).
+REJECTIONS_TABLE = f"{OUTPUT_SCHEMA}.batch_rejections"
+all_violations.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(REJECTIONS_TABLE)
+display(spark.table(REJECTIONS_TABLE).orderBy("batch", "return_id"))
+
+# Stop before any feature output if no batch passes.
+assert good_batch_table is not None, "No batch passed the completeness and uniqueness checks"
+good_batch_df = spark.table(good_batch_table)
+print("good_batch_df =", good_batch_table)
+
+
 
 
 
@@ -173,30 +218,41 @@ for table in tables:
 # COMMAND ----------
 
 # DBTITLE 1,Build and save return_features
-# Create and populate the return_features table partitioned by tax_year
+# Build return_features from whichever batch cell 8 accepted (good_batch_table / good_batch_df).
 from pyspark.sql.functions import col, try_divide
 
-# Read from the corrected returns table
-df = spark.table(f"{INPUT_SCHEMA}.returns_corrected")
+FEATURES_TABLE = f"{OUTPUT_SCHEMA}.return_features"
+FEATURE_COLUMNS = ["return_id", "tax_year", "deduction_to_income"]
+print(f"Source batch: {good_batch_table}")
 
-# Build the feature table: return_id, tax_year, deduction_to_income
-features_df = df.select(
+# Ratio is deduction / income; a zero-income return keeps its row with a NULL ratio.
+features_df = good_batch_df.select(
     col("return_id"),
     col("tax_year"),
-    try_divide(col("deduction"), col("income")).alias("deduction_to_income")
+    try_divide(col("deduction"), col("income")).alias("deduction_to_income"),
 )
 
-# Write as a managed Delta table partitioned by tax_year
-features_df.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .partitionBy("tax_year") \
-    .saveAsTable(f"{OUTPUT_SCHEMA}.return_features")
+# overwrite removes every existing row (and replaces schema/partitioning) in one Delta transaction:
+# nothing from an earlier run survives, and a failed write leaves the previous version intact.
+(features_df.write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .partitionBy("tax_year")
+    .saveAsTable(FEATURES_TABLE))
 
-# Verify by reading it back
-result = spark.table(f"{OUTPUT_SCHEMA}.return_features")
-print(f"return_features row count: {result.count()}")
-result.orderBy("return_id", "tax_year").show()
+# Read back: exactly the three columns, and exactly the accepted returns, once each.
+saved = spark.table(FEATURES_TABLE)
+accepted_ids = good_batch_df.select("return_id")
+saved_ids = saved.select("return_id")
+assert saved.columns == FEATURE_COLUMNS, f"unexpected columns: {saved.columns}"
+assert saved.count() == good_batch_df.count(), f"{saved.count()} rows saved, {good_batch_df.count()} accepted"
+assert saved_ids.distinct().count() == saved.count(), "a return_id appears more than once"
+assert saved_ids.exceptAll(accepted_ids).count() == 0, "the table holds a return that is not in the accepted batch"
+assert accepted_ids.exceptAll(saved_ids).count() == 0, "an accepted return is missing from the table"
+
+print(f"{FEATURES_TABLE}: {saved.count()} rows, one per accepted return")
+saved.orderBy("tax_year", "return_id").show()
 
 
 # COMMAND ----------
@@ -208,4 +264,36 @@ result.orderBy("return_id", "tax_year").show()
 
 # COMMAND ----------
 
+# DBTITLE 1,Save year split tables
 # Your implementation, rerun comparison and exports here.
+# Year split tables, built from the SAVED return_features table (not from features_df).
+from functools import reduce
+from pyspark.sql.functions import col
+
+SPLIT_YEARS = {"features_train": 2022, "features_validation": 2023, "features_test": 2024}
+saved_features = spark.table(FEATURES_TABLE)
+
+# overwrite: each run replaces the split tables, so reruns leave no appended copies.
+for name, year in SPLIT_YEARS.items():
+    (saved_features.filter(col("tax_year") == year)
+        .write.format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+        .saveAsTable(f"{OUTPUT_SCHEMA}.{name}"))
+
+# Read back each split: only its assigned year, same columns as return_features.
+splits = {name: spark.table(f"{OUTPUT_SCHEMA}.{name}") for name in SPLIT_YEARS}
+for name, year in SPLIT_YEARS.items():
+    years = sorted(r[0] for r in splits[name].select("tax_year").distinct().collect())
+    assert years == [year], f"{name} holds tax years {years}, expected only {year}"
+    assert splits[name].columns == saved_features.columns, f"{name} columns differ: {splits[name].columns}"
+    print(f"{OUTPUT_SCHEMA}.{name}: {splits[name].count()} rows, tax year {year}")
+
+# Every saved feature row is in exactly one split, with the same values.
+combined = reduce(lambda a, b: a.unionByName(b), splits.values())
+assert combined.count() == saved_features.count(), \
+    f"{combined.count()} rows across splits, {saved_features.count()} in return_features (a year is unassigned?)"
+assert combined.select("return_id").distinct().count() == combined.count(), "a return_id is in more than one split"
+assert combined.exceptAll(saved_features).count() == 0, "a split holds a row not in return_features"
+assert saved_features.exceptAll(combined).count() == 0, "a return_features row is missing from the splits"
+print("Every accepted return is in exactly one split, in its assigned year, with unchanged values.")
