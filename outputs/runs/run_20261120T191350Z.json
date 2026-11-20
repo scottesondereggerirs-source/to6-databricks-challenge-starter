@@ -1,0 +1,136 @@
+{
+ "executed_at_utc": "2026-11-20T19:13:50+00:00",
+ "notebook_path": "/Users/scott.e.sonderegger.irs@catalyte.ai/to6-databricks-challenge-starter/notebook",
+ "notebook_url": "https://dbc-48a16403-f66f.cloud.databricks.com/editor/notebooks/127024866558407",
+ "accepted_batch": "training.to6_challenge3_inputs.returns_corrected",
+ "tables": {
+  "return_features": [
+   {
+    "return_id": "R01",
+    "tax_year": 2022,
+    "deduction_to_income": 0.2
+   },
+   {
+    "return_id": "R02",
+    "tax_year": 2022,
+    "deduction_to_income": 0.165
+   },
+   {
+    "return_id": "R03",
+    "tax_year": 2022,
+    "deduction_to_income": null
+   },
+   {
+    "return_id": "R04",
+    "tax_year": 2022,
+    "deduction_to_income": 0.1475
+   },
+   {
+    "return_id": "R05",
+    "tax_year": 2023,
+    "deduction_to_income": 0.144
+   },
+   {
+    "return_id": "R06",
+    "tax_year": 2023,
+    "deduction_to_income": 0.14166666666666666
+   },
+   {
+    "return_id": "R07",
+    "tax_year": 2023,
+    "deduction_to_income": 0.14
+   },
+   {
+    "return_id": "R08",
+    "tax_year": 2023,
+    "deduction_to_income": 0.13875
+   },
+   {
+    "return_id": "R09",
+    "tax_year": 2024,
+    "deduction_to_income": null
+   },
+   {
+    "return_id": "R10",
+    "tax_year": 2024,
+    "deduction_to_income": 0.137
+   },
+   {
+    "return_id": "R11",
+    "tax_year": 2024,
+    "deduction_to_income": 0.13636363636363635
+   },
+   {
+    "return_id": "R12",
+    "tax_year": 2024,
+    "deduction_to_income": 0.13583333333333333
+   }
+  ],
+  "features_train": [
+   {
+    "return_id": "R01",
+    "tax_year": 2022,
+    "deduction_to_income": 0.2
+   },
+   {
+    "return_id": "R02",
+    "tax_year": 2022,
+    "deduction_to_income": 0.165
+   },
+   {
+    "return_id": "R03",
+    "tax_year": 2022,
+    "deduction_to_income": null
+   },
+   {
+    "return_id": "R04",
+    "tax_year": 2022,
+    "deduction_to_income": 0.1475
+   }
+  ],
+  "features_validation": [
+   {
+    "return_id": "R05",
+    "tax_year": 2023,
+    "deduction_to_income": 0.144
+   },
+   {
+    "return_id": "R06",
+    "tax_year": 2023,
+    "deduction_to_income": 0.14166666666666666
+   },
+   {
+    "return_id": "R07",
+    "tax_year": 2023,
+    "deduction_to_income": 0.14
+   },
+   {
+    "return_id": "R08",
+    "tax_year": 2023,
+    "deduction_to_income": 0.13875
+   }
+  ],
+  "features_test": [
+   {
+    "return_id": "R09",
+    "tax_year": 2024,
+    "deduction_to_income": null
+   },
+   {
+    "return_id": "R10",
+    "tax_year": 2024,
+    "deduction_to_income": 0.137
+   },
+   {
+    "return_id": "R11",
+    "tax_year": 2024,
+    "deduction_to_income": 0.13636363636363635
+   },
+   {
+    "return_id": "R12",
+    "tax_year": 2024,
+    "deduction_to_income": 0.13583333333333333
+   }
+  ]
+ }
+}

@@ -1,0 +1,47 @@
+{
+ "run_1": {
+  "file": "outputs/runs/run_20261120T191350Z.json",
+  "executed_at_utc": "2026-11-20T19:13:50+00:00",
+  "notebook_url": "https://dbc-48a16403-f66f.cloud.databricks.com/editor/notebooks/127024866558407"
+ },
+ "run_2": {
+  "file": "outputs/runs/run_20261120T191648Z.json",
+  "executed_at_utc": "2026-11-20T19:16:48+00:00",
+  "notebook_url": "https://dbc-48a16403-f66f.cloud.databricks.com/editor/notebooks/127024866558407"
+ },
+ "tables": {
+  "return_features": {
+   "rows_run_1": 12,
+   "rows_run_2": 12,
+   "only_in_run_1": [],
+   "only_in_run_2": [],
+   "value_differences": [],
+   "match": true
+  },
+  "features_train": {
+   "rows_run_1": 4,
+   "rows_run_2": 4,
+   "only_in_run_1": [],
+   "only_in_run_2": [],
+   "value_differences": [],
+   "match": true
+  },
+  "features_validation": {
+   "rows_run_1": 4,
+   "rows_run_2": 4,
+   "only_in_run_1": [],
+   "only_in_run_2": [],
+   "value_differences": [],
+   "match": true
+  },
+  "features_test": {
+   "rows_run_1": 4,
+   "rows_run_2": 4,
+   "only_in_run_1": [],
+   "only_in_run_2": [],
+   "value_differences": [],
+   "match": true
+  }
+ },
+ "all_match": true
+}

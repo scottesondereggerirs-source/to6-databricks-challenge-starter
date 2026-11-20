@@ -9,11 +9,6 @@
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC select * from course.learner_42.test;
-
-# COMMAND ----------
-
 from pathlib import Path
 import json
 
@@ -47,12 +42,35 @@ print({"input_schema": INPUT_SCHEMA, "output_schema": OUTPUT_SCHEMA})
 
 # COMMAND ----------
 
+# DBTITLE 1,Outcome 1 summary: source and findings
+# MAGIC %md
+# MAGIC ### Source reference and findings
+# MAGIC
+# MAGIC **Source.** The inputs are in `training.to6_challenge3_inputs`. The supplied lineage view `source_lineage`, and the Catalog Explorer Lineage tab, show that both delivered batches, `returns_initial` and `returns_corrected`, come from the upstream table `parsed_source`. The transformation between them is not visible.
+# MAGIC
+# MAGIC **Row meaning.** One row is one tax return. `return_id` identifies the return and must be unique. `taxpayer_id` identifies the filer, who can have returns in several years. The required fields are `return_id`, `tax_year`, `income` and `deduction`. Amounts are nonnegative, and zero income is valid. A *batch* is one whole delivered table.
+# MAGIC
+# MAGIC **Whole-batch summaries** (produced by the cell below):
+# MAGIC
+# MAGIC | Table | Rows | 2022 / 2023 / 2024 | Rows missing a required value | Extra duplicate rows | Zero income |
+# MAGIC | --- | --- | --- | --- | --- | --- |
+# MAGIC | `parsed_source` (upstream) | 12 | 4 / 4 / 4 | 0 | 0 | R03, R09 |
+# MAGIC | `returns_initial` | 13 | 5 / 4 / 4 | 1 (R02, `income`) | 1 (R01 twice) | R03, R09 |
+# MAGIC | `returns_corrected` | 12 | 4 / 4 / 4 | 0 | 0 | R03, R09 |
+# MAGIC
+# MAGIC **What this changes for the next steps:**
+# MAGIC * `returns_initial` breaks uniqueness and completeness, so the outcome 2 checks must reject it and keep the affected records (both copies of `R01`, and `R02`).
+# MAGIC * `returns_corrected` matches `parsed_source` on every summary and should pass the same rules.
+# MAGIC * `R03` and `R09` have zero income. They are valid returns, so they must stay in the features with a NULL ratio, and the division must not fail on them.
+
+# COMMAND ----------
+
 # DBTITLE 1,List tables and columns in input schema
 #I brought in the prompts/clarifications from the powerpoint. Used the code below and manual browsing to help make the observatoins:
 #Prompt 1 Catalog descriptions, three sample rows, the lineage view; a concise source reference and explanation; A note: row, fields, identifier, source
-#Answer 1 -- there are four tables: parsed_source, returns_initial, returns_corrected, source_lineage. Parsed source and returns_initial get processed into returns_initial? Then parse_source and returns_corrected get processed into returns_corrected. Honestly, the picture really only clarifies that parsed_source is the starting point. The transformation code is hidden. 
+#Answer 1 -- there are four tables: parsed_source, returns_initial, returns_corrected, source_lineage. source_lineage and the Catalog Lineage tab both show parsed_source as the upstream source of the two delivered batches, returns_initial and returns_corrected. The transformation code between them is hidden. 
 
-#3 Inspect the full batch as well as the sample rows; Based on table comments and the diagram, I'm assuming that this means parsed_source, which somehow has one LESS record than its downstream returns_initial, which has 13 records. That appears to be an issue. Returns_initial has a row with a null column, parsed_source doesn't. Kinda seems like our post-processing is worse than the batch. 
+#3 Inspect the full batch as well as the sample rows; a batch is one whole delivered table (returns_initial or returns_corrected). returns_initial has 13 records, one more than its upstream parsed_source (12): R01 appears twice, and R02 has a null income that parsed_source does not have, so the hidden delivery step introduced these defects. 
 
 """+---------+-----------+--------+------+---------+
 |return_id|taxpayer_id|tax_year|income|deduction|
@@ -100,7 +118,7 @@ print({"input_schema": INPUT_SCHEMA, "output_schema": OUTPUT_SCHEMA})
 """
 
 #Prompt 5 Keep the queries and results in the notebook, and explain which findings affect your next checks or transformations; Found, and what it changes. A chart is optional. These observations do not replace the quality checks in the next step; Outcome 2's checks still decide
-#Answer 5: Looks like returns_initial has a bad record, so we're expecting that when we're done with whatever the hell we're doing, it should be gone. 
+#Answer 5: Looks like returns_initial has a bad record, so we're expecting that when we're done with the processing, it should be gone. 
 
 # Your investigation here.
 # Set the schema
@@ -157,11 +175,12 @@ for table in tables:
 
 # DBTITLE 1,Validate batches and choose good_batch_df
 # Your checks and decision here.
-# I guess, check the powerpoint for the instructions? God damnit. What in the hell is going on here? What is the definition of a "batch?" Are the different tables considered as different batches? Where are the fucking "batches?"
-
-#ok -- half of the instructions make it look like I should be writing code here, but maybe we're still just doing visual observations? I've beaten this to death by now just trying to understand and work through the directions.
-#Based on everything we're looking at, if we assume "batch" means an entire table, which nobody in their right mind would do, then it looks like parsed_source was used to create a "bad" batch in returns_initial and then a "good" batch in "returns_corrected"
-# So, I guess "returns_corrected" is the correct batch, and "returns_initial" is the bad batch, based on the duplcate return_id with a null income value.
+# Each batch is one whole delivered table. Both are checked with the same rules: completeness (no null
+# return_id, tax_year, income or deduction), uniqueness (return_id appears once) and nonnegative amounts.
+# Result: returns_initial is REJECTED. R01 appears twice (uniqueness) and R02 has a null income (completeness).
+# Those 3 records and their reasons are saved to batch_rejections; no row is dropped, de-duplicated or zero-filled.
+# Next action: returns_corrected passes the same rules (0 failing records), so it is the accepted batch
+# (good_batch_df) and the only source of the feature output.
 
 from pyspark.sql import functions as F, Window
 
@@ -254,6 +273,27 @@ assert accepted_ids.exceptAll(saved_ids).count() == 0, "an accepted return is mi
 print(f"{FEATURES_TABLE}: {saved.count()} rows, one per accepted return")
 saved.orderBy("tax_year", "return_id").show()
 
+# Expected nonzero value, derived by hand from the source row (not from Spark):
+# R01 in the accepted batch has deduction 20 and income 100, so deduction_to_income = 20 / 100 = 0.2.
+EXPECTED_ID, EXPECTED_DEDUCTION, EXPECTED_INCOME, EXPECTED_RATIO = "R01", 20, 100, 0.2
+source = spark.table(good_batch_table)
+src = source.filter(col("return_id") == EXPECTED_ID).select("income", "deduction").collect()
+assert len(src) == 1, f"{EXPECTED_ID} appears {len(src)} times in the source"
+assert (src[0]["income"], src[0]["deduction"]) == (EXPECTED_INCOME, EXPECTED_DEDUCTION), \
+    f"source values for {EXPECTED_ID} changed: {src[0].asDict()}"
+got = saved.filter(col("return_id") == EXPECTED_ID).collect()[0]["deduction_to_income"]
+assert got is not None and abs(got - EXPECTED_RATIO) < 1e-12, f"{EXPECTED_ID}: saved {got}, expected {EXPECTED_RATIO}"
+print(f"Expected-value check: {EXPECTED_ID} = {EXPECTED_DEDUCTION} / {EXPECTED_INCOME} = {EXPECTED_RATIO}; saved table has {got}")
+
+# Zero-income check, on the saved table: every zero-income source return is present once, with a NULL ratio.
+zero_ids = sorted(r["return_id"] for r in source.filter(col("income") == 0).select("return_id").collect())
+assert zero_ids, "the source has no zero-income return to check"
+zero_saved = {r["return_id"]: r["deduction_to_income"]
+              for r in saved.filter(col("return_id").isin(zero_ids)).collect()}
+assert sorted(zero_saved) == zero_ids, f"zero-income returns missing from the table: {set(zero_ids) - set(zero_saved)}"
+assert all(v is None for v in zero_saved.values()), f"a zero-income return has a non-null ratio: {zero_saved}"
+print(f"Zero-income check: {', '.join(zero_ids)} are in the saved table with a NULL ratio")
+
 
 # COMMAND ----------
 
@@ -297,3 +337,107 @@ assert combined.select("return_id").distinct().count() == combined.count(), "a r
 assert combined.exceptAll(saved_features).count() == 0, "a split holds a row not in return_features"
 assert saved_features.exceptAll(combined).count() == 0, "a return_features row is missing from the splits"
 print("Every accepted return is in exactly one split, in its assigned year, with unchanged values.")
+
+# COMMAND ----------
+
+# DBTITLE 1,Export final tables and rejections to CSV
+# Small CSV exports for the submission, read from the SAVED tables and overwritten on every run.
+import pandas as pd
+
+EXPORTS = {
+    "return_features": ["return_id"],
+    "features_train": ["return_id"],
+    "features_validation": ["return_id"],
+    "features_test": ["return_id"],
+    "batch_rejections": ["batch", "return_id", "rejection_reason"],  # affected initial records + reasons
+}
+export_dir = repo_root / "outputs"
+export_dir.mkdir(exist_ok=True)
+
+for table, sort_cols in EXPORTS.items():
+    df = spark.table(f"{OUTPUT_SCHEMA}.{table}").orderBy(*sort_cols).toPandas().convert_dtypes()  # keeps 100 as 100 when a column has a NULL
+    path = export_dir / f"{table}.csv"
+    df.to_csv(path, index=False)  # NULL ratios are written as empty fields
+    back = pd.read_csv(path)
+    assert len(back) == len(df) and list(back.columns) == list(df.columns), f"{path.name} did not read back intact"
+    print(f"Wrote {path.relative_to(repo_root)}: {len(df)} rows, columns {list(df.columns)}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Save this run's snapshot
+# Run snapshot: written only when every earlier cell succeeded, so each file is one complete successful run.
+import json
+from datetime import datetime, timezone
+from databricks.sdk import WorkspaceClient
+
+SNAPSHOT_TABLES = ["return_features", "features_train", "features_validation", "features_test"]
+RUNS_DIR = repo_root / "outputs" / "runs"
+RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+run_time = datetime.now(timezone.utc)
+notebook_path = str(repo_root / "notebook").removeprefix("/Workspace")
+try:
+    notebook_id = WorkspaceClient().workspace.get_status(notebook_path).object_id
+    host = spark.conf.get("spark.databricks.workspaceUrl")
+    notebook_url = f"https://{host}/editor/notebooks/{notebook_id}"
+except Exception as e:  # URL is evidence only; record why it is missing rather than fail the run
+    notebook_url = f"unavailable ({type(e).__name__}); add it to SUBMISSION.md by hand"
+
+snapshot = {
+    "executed_at_utc": run_time.isoformat(timespec="seconds"),
+    "notebook_path": notebook_path,
+    "notebook_url": notebook_url,
+    "accepted_batch": good_batch_table,
+    "tables": {
+        t: [r.asDict() for r in spark.table(f"{OUTPUT_SCHEMA}.{t}").orderBy("return_id").collect()]
+        for t in SNAPSHOT_TABLES
+    },
+}
+snapshot_file = RUNS_DIR / f"run_{run_time.strftime('%Y%m%dT%H%M%SZ')}.json"
+snapshot_file.write_text(json.dumps(snapshot, indent=1) + "\n", encoding="utf-8")
+print("Wrote", snapshot_file.relative_to(repo_root), "|", snapshot["executed_at_utc"], "|", notebook_url)
+for t, rows in snapshot["tables"].items():
+    print(f"  {t}: {len(rows)} rows")
+
+# COMMAND ----------
+
+# DBTITLE 1,Compare the two most recent runs
+# Compare the two most recent run snapshots: same return IDs and same values in every table.
+snapshots = sorted(RUNS_DIR.glob("run_*.json"))  # names sort by UTC timestamp
+if len(snapshots) < 2:
+    print(f"{len(snapshots)} run snapshot so far. Detach & re-attach, then Run all again for the second run.")
+else:
+    first_file, second_file = snapshots[-2], snapshots[-1]
+    first, second = (json.loads(p.read_text(encoding="utf-8")) for p in (first_file, second_file))
+
+    def as_rows(rows):
+        return {r["return_id"]: (r["tax_year"], r["deduction_to_income"]) for r in rows}
+
+    tables = {}
+    for t in SNAPSHOT_TABLES:
+        a, b = as_rows(first["tables"][t]), as_rows(second["tables"][t])
+        tables[t] = {
+            "rows_run_1": len(first["tables"][t]),
+            "rows_run_2": len(second["tables"][t]),
+            "only_in_run_1": sorted(a.keys() - b.keys()),
+            "only_in_run_2": sorted(b.keys() - a.keys()),
+            "value_differences": sorted(k for k in a.keys() & b.keys() if a[k] != b[k]),
+        }
+        tables[t]["match"] = (tables[t]["rows_run_1"] == tables[t]["rows_run_2"] == len(a) == len(b)
+                              and not (tables[t]["only_in_run_1"] or tables[t]["only_in_run_2"]
+                                       or tables[t]["value_differences"]))
+
+    comparison = {
+        "run_1": {"file": str(first_file.relative_to(repo_root)), "executed_at_utc": first["executed_at_utc"],
+                  "notebook_url": first["notebook_url"]},
+        "run_2": {"file": str(second_file.relative_to(repo_root)), "executed_at_utc": second["executed_at_utc"],
+                  "notebook_url": second["notebook_url"]},
+        "tables": tables,
+        "all_match": all(v["match"] for v in tables.values()),
+    }
+    (repo_root / "outputs" / "run_comparison.json").write_text(json.dumps(comparison, indent=1) + "\n", encoding="utf-8")
+    for t, v in tables.items():
+        print(f"{t}: run 1 {v['rows_run_1']} rows, run 2 {v['rows_run_2']} rows -> {'MATCH' if v['match'] else 'DIFFERENT'}")
+    print("Wrote outputs/run_comparison.json")
+    assert comparison["all_match"], f"Runs differ: {json.dumps(tables, indent=1)}"
+    print(f"Runs {first['executed_at_utc']} and {second['executed_at_utc']} left identical return IDs and values.")

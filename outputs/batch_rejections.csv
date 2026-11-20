@@ -1,0 +1,4 @@
+return_id,taxpayer_id,tax_year,income,deduction,rejection_reason,batch
+R01,F0,2022,100,20,uniqueness: return_id appears more than once,training.to6_challenge3_inputs.returns_initial
+R01,F0,2022,100,20,uniqueness: return_id appears more than once,training.to6_challenge3_inputs.returns_initial
+R02,F1,2022,,33,completeness: income is null,training.to6_challenge3_inputs.returns_initial
