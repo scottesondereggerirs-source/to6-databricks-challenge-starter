@@ -172,8 +172,32 @@ for table in tables:
 
 # COMMAND ----------
 
-# Your implementation and verification here.
-#And what the hell are we talking about here? Certainly nothing in the instructions. I guess we'll look at the powerpoint, because hunding across a zillion documents is super helpful. Oh fuck, am I supposed to push to github again? 
+# DBTITLE 1,Build and save return_features
+# Create and populate the return_features table partitioned by tax_year
+from pyspark.sql.functions import col, try_divide
+
+# Read from the corrected returns table
+df = spark.table(f"{INPUT_SCHEMA}.returns_corrected")
+
+# Build the feature table: return_id, tax_year, deduction_to_income
+features_df = df.select(
+    col("return_id"),
+    col("tax_year"),
+    try_divide(col("deduction"), col("income")).alias("deduction_to_income")
+)
+
+# Write as a managed Delta table partitioned by tax_year
+features_df.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .partitionBy("tax_year") \
+    .saveAsTable(f"{OUTPUT_SCHEMA}.return_features")
+
+# Verify by reading it back
+result = spark.table(f"{OUTPUT_SCHEMA}.return_features")
+print(f"return_features row count: {result.count()}")
+result.orderBy("return_id", "tax_year").show()
+
 
 # COMMAND ----------
 
