@@ -156,7 +156,11 @@ for table in tables:
 # COMMAND ----------
 
 # Your checks and decision here.
-# I guess, check the powerpoint for the instructions? God damnit. What in the hell is going on here? What is the definition of a "batch?" Are the different tables considered as different batches? Where ar the fucking "batches?"
+# I guess, check the powerpoint for the instructions? God damnit. What in the hell is going on here? What is the definition of a "batch?" Are the different tables considered as different batches? Where are the fucking "batches?"
+
+#ok -- half of the instructions make it look like I should be writing code here, but maybe we're still just doing visual observations? I've beaten this to death by now just trying to understand and work through the directions.
+#Based on everything we're looking at, if we assume "batch" means an entire table, which nobody in their right mind would do, then it looks like parsed_source was used to create a "bad" batch in returns_initial and then a "good" batch in "returns_corrected"
+# So, I guess "returns_corrected" is the correct batch, and "returns_initial" is the bad batch, based on the duplcate return_id with a null income value.
 
 
 
@@ -169,6 +173,7 @@ for table in tables:
 # COMMAND ----------
 
 # Your implementation and verification here.
+#And what the hell are we talking about here? Certainly nothing in the instructions. I guess we'll look at the powerpoint, because hunding across a zillion documents is super helpful. Oh fuck, am I supposed to push to github again? 
 
 # COMMAND ----------
 
